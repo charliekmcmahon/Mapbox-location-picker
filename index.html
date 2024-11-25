@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mapbox Location Selector</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="tokens.js"></script> <!-- Include the tokens -->
+  <script src="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js"></script>
+  <link href="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css" rel="stylesheet" />
+</head>
+<body class="bg-gray-100 min-h-screen flex flex-row space-x-6 p-6">
+
+  <!-- Main Selector Section -->
+  <div class="w-full max-w-lg bg-white p-6 rounded-lg shadow-md">
+    <h1 class="text-2xl font-bold text-gray-800 mb-4">Select Locations</h1>
+
+    <!-- City Display -->
+    <div class="mb-4">
+      <p id="cityDisplay" class="text-lg text-gray-700">City: Brisbane</p>
+    </div>
+
+    <!-- Combo Box -->
+    <div class="relative mb-4">
+      <input 
+        id="searchBox"
+        type="text" 
+        placeholder="Search for a location..."
+        class="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+        autocomplete="off"
+      />
+      <ul id="resultsList" class="absolute w-full bg-white border border-gray-200 rounded-lg mt-1 hidden z-10">
+        <!-- Search results will appear here -->
+      </ul>
+    </div>
+
+    <!-- Selected Locations -->
+    <h2 class="text-lg font-semibold text-gray-700 mb-2">Selected Locations:</h2>
+    <ul id="selectedLocations" class="space-y-2">
+      <!-- Selected locations will appear here -->
+    </ul>
+  </div>
+
+  <!-- Map Section -->
+  <div id="map" class="w-1/2 h-screen rounded-lg shadow-md"></div>
+
+  <script>
+    const searchBox = document.getElementById('searchBox');
+    const resultsList = document.getElementById('resultsList');
+    const selectedLocations = document.getElementById('selectedLocations');
+    const city = 'Brisbane'; // Hardcoded city
+
+    // Initialize Mapbox map
+    mapboxgl.accessToken = MAPBOX_ACCESS_TOKEN;
+    const map = new mapboxgl.Map({
+      container: 'map',
+      style: 'mapbox://styles/mapbox/streets-v11',
+      center: [153.0281, -27.4679], // Default center on Brisbane
+      zoom: 12
+    });
+
+    const markers = []; // Array to store map markers
+    const coordinatesArray = []; // Array to store coordinates for bounds
+
+    // Animate map smoothly to frame all points
+    function adjustToBounds() {
+      if (coordinatesArray.length === 0) {
+        map.flyTo({
+          center: [153.0281, -27.4679],
+          zoom: 12,
+          duration: 2000 // Reset to default view smoothly
+        });
+        return;
+      }
+
+      const bounds = coordinatesArray.reduce(
+        (bounds, coord) => bounds.extend(coord),
+        new mapboxgl.LngLatBounds(coordinatesArray[0], coordinatesArray[0])
+      );
+
+      // Calculate the center and zoom for smooth animation
+      const center = bounds.getCenter();
+      const distance = bounds.getNorthEast().distanceTo(bounds.getSouthWest());
+      const zoom = Math.min(18, Math.max(14, Math.log2(40075017 / distance) - 8));
+
+      console.log(center, zoom);
+
+      map.flyTo({
+        center,
+        zoom,
+        duration: 1000, // Smooth transition
+        essential: true
+      });
+    }
+
+    // Add a marker to the map and animate to its location
+    function addMarker(coordinates, displayName) {
+      const marker = new mapboxgl.Marker().setLngLat(coordinates).setPopup(
+        new mapboxgl.Popup({ offset: 25 }).setHTML(`<p>${displayName}</p>`)
+      );
+      marker.addTo(map);
+      markers.push(marker);
+      coordinatesArray.push(coordinates);
+
+      adjustToBounds(); // Always animate bounds after adding a point
+    }
+
+    // Remove a marker from the map and re-adjust the view
+    function removeMarker(index) {
+      markers[index]?.remove();
+      markers.splice(index, 1);
+      coordinatesArray.splice(index, 1);
+      adjustToBounds(); // Adjust bounds after removal
+    }
+
+    // Fetch locations from Mapbox API
+    async function fetchLocations(query) {
+      const searchQuery = `${query}, Brisbane, Queensland, Australia`;
+      const url = `${MAPBOX_API_URL}/${encodeURIComponent(searchQuery)}.json?access_token=${MAPBOX_ACCESS_TOKEN}&limit=5&types=poi`;
+      const response = await fetch(url);
+      const data = await response.json();
+
+      return data.features.map(feature => {
+        const address = feature.properties.address || "No street address available";
+        const suburb = feature.context?.find(c => c.id.includes('locality'))?.text || "No suburb available";
+        const postcode = feature.context?.find(c => c.id.includes('postcode'))?.text || "No postcode available";
+
+        return {
+          name: feature.place_name,
+          displayName: feature.text,
+          address,
+          suburb,
+          postcode,
+          coordinates: feature.geometry.coordinates
+        };
+      });
+    }
+
+    // Handle input changes
+    searchBox.addEventListener('input', async (e) => {
+      const query = e.target.value;
+
+      if (query.length < 3) {
+        resultsList.classList.add('hidden');
+        return;
+      }
+
+      const locations = await fetchLocations(query);
+
+      // Render results
+      resultsList.innerHTML = locations
+        .map(location => `
+          <li 
+            data-display-name="${location.displayName}" 
+            data-address="${location.address}" 
+            data-suburb="${location.suburb}" 
+            data-postcode="${location.postcode}" 
+            data-coordinates="${location.coordinates}" 
+            class="p-2 hover:bg-gray-100 cursor-pointer">
+            ${location.displayName}
+          </li>
+        `)
+        .join('');
+
+      resultsList.classList.remove('hidden');
+    });
+
+    // Update list item numbers
+    function updateListNumbers() {
+      const items = selectedLocations.querySelectorAll('li');
+      items.forEach((item, index) => {
+        const numberSpan = item.querySelector('.order-number');
+        if (numberSpan) {
+          numberSpan.textContent = index + 1;
+        }
+      });
+    }
+
+    // Handle selection of a location
+    resultsList.addEventListener('click', (e) => {
+      if (e.target.tagName === 'LI') {
+        const displayName = e.target.dataset.displayName;
+        const address = e.target.dataset.address;
+        const suburb = e.target.dataset.suburb;
+        const postcode = e.target.dataset.postcode;
+        const coordinates = JSON.parse(`[${e.target.dataset.coordinates}]`);
+
+        // Add to selected list
+        const li = document.createElement('li');
+        li.className = 'flex items-start p-3 bg-gray-200 rounded-lg space-x-4';
+        li.innerHTML = `
+          <span class="order-number flex items-center justify-center w-8 h-8 bg-indigo-500 text-white rounded-full">${selectedLocations.children.length + 1}</span>
+          <div class="flex-grow">
+            <h3 class="text-lg font-semibold">${displayName}</h3>
+            <p class="text-sm text-gray-600">${address}</p>
+            <p class="text-sm text-gray-600">${suburb}, ${postcode}</p>
+          </div>
+          <button class="text-red-500 hover:text-red-700 focus:outline-none remove-btn">Remove</button>
+        `;
+
+        selectedLocations.appendChild(li);
+
+        // Plot the marker on the map
+        addMarker(coordinates, displayName);
+
+        // Clear search box and results
+        searchBox.value = '';
+        resultsList.classList.add('hidden');
+      }
+    });
+
+    // Handle removal of a location
+    selectedLocations.addEventListener('click', (e) => {
+      if (e.target.classList.contains('remove-btn')) {
+        const li = e.target.closest('li');
+        const index = Array.from(selectedLocations.children).indexOf(li);
+
+        // Remove marker from the map
+        removeMarker(index);
+
+        // Remove the list item
+        selectedLocations.removeChild(li);
+        updateListNumbers(); // Update numbers after removal
+      }
+    });
+
+    // Close results list when clicking outside
+    document.addEventListener('click', (e) => {
+      if (!resultsList.contains(e.target) && e.target !== searchBox) {
+        resultsList.classList.add('hidden');
+      }
+    });
+  </script>
+</body>
+</html>
