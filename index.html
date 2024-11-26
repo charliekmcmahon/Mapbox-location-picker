@@ -76,7 +76,7 @@
     mapboxgl.accessToken = MAPBOX_ACCESS_TOKEN;
     const map = new mapboxgl.Map({
       container: 'map',
-      style: 'mapbox://styles/mapbox/streets-v11',
+      style: 'mapbox://styles/mapbox/streets-v12',
       center: [153.0281, -27.4679], // Default center on Brisbane
       zoom: 12
     });
@@ -90,7 +90,9 @@
         map.flyTo({
           center: [153.0281, -27.4679],
           zoom: 12,
-          duration: 2000 // Reset to default view smoothly
+          duration: 1000, // Reset to default view smoothly
+          essential: true
+
         });
         return;
       }
