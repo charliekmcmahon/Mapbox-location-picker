@@ -8,6 +8,28 @@
   <script src="tokens.js"></script> <!-- Include the tokens -->
   <script src="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js"></script>
   <link href="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css" rel="stylesheet" />
+  <style>
+    .dragging {
+      opacity: 0.5;
+    }
+    .drop-line {
+      height: 4px;
+      background-color: #4f46e5; /* Indigo-500 Tailwind color */
+      margin-top: -2px;
+      margin-bottom: -2px;
+    }
+    .marker-number {
+      background-color: #4f46e5;
+      color: white;
+      border-radius: 50%;
+      width: 30px;
+      height: 30px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: bold;
+    }
+  </style>
 </head>
 <body class="bg-gray-100 min-h-screen flex flex-row space-x-6 p-6">
 
@@ -78,12 +100,9 @@
         new mapboxgl.LngLatBounds(coordinatesArray[0], coordinatesArray[0])
       );
 
-      // Calculate the center and zoom for smooth animation
       const center = bounds.getCenter();
       const distance = bounds.getNorthEast().distanceTo(bounds.getSouthWest());
       const zoom = Math.min(18, Math.max(14, Math.log2(40075017 / distance) - 8));
-
-      console.log(center, zoom);
 
       map.flyTo({
         center,
@@ -95,7 +114,12 @@
 
     // Add a marker to the map and animate to its location
     function addMarker(coordinates, displayName) {
-      const marker = new mapboxgl.Marker().setLngLat(coordinates).setPopup(
+      const markerNumber = markers.length + 1;
+      const el = document.createElement('div');
+      el.className = 'marker-number';
+      el.textContent = markerNumber;
+
+      const marker = new mapboxgl.Marker(el).setLngLat(coordinates).setPopup(
         new mapboxgl.Popup({ offset: 25 }).setHTML(`<p>${displayName}</p>`)
       );
       marker.addTo(map);
@@ -110,7 +134,17 @@
       markers[index]?.remove();
       markers.splice(index, 1);
       coordinatesArray.splice(index, 1);
+      updateMarkers(); // Update markers numbering after removal
       adjustToBounds(); // Adjust bounds after removal
+    }
+
+    // Update markers numbering
+    function updateMarkers() {
+      const items = selectedLocations.querySelectorAll('li');
+      markers.forEach((marker, index) => {
+        const el = marker.getElement();
+        el.textContent = index + 1;
+      });
     }
 
     // Fetch locations from Mapbox API
@@ -136,7 +170,6 @@
       });
     }
 
-    // Handle input changes
     searchBox.addEventListener('input', async (e) => {
       const query = e.target.value;
 
@@ -157,7 +190,8 @@
             data-postcode="${location.postcode}" 
             data-coordinates="${location.coordinates}" 
             class="p-2 hover:bg-gray-100 cursor-pointer">
-            ${location.displayName}
+            <p class="text-lg font-semibold">${location.displayName}</p>
+            <p class="text-sm text-gray-500">${location.address}, ${location.suburb}, ${location.postcode}</p>
           </li>
         `)
         .join('');
@@ -178,16 +212,19 @@
 
     // Handle selection of a location
     resultsList.addEventListener('click', (e) => {
-      if (e.target.tagName === 'LI') {
-        const displayName = e.target.dataset.displayName;
-        const address = e.target.dataset.address;
-        const suburb = e.target.dataset.suburb;
-        const postcode = e.target.dataset.postcode;
-        const coordinates = JSON.parse(`[${e.target.dataset.coordinates}]`);
+      if (e.target.closest('li')) {
+        const listItem = e.target.closest('li');
+
+        const displayName = listItem.dataset.displayName;
+        const address = listItem.dataset.address;
+        const suburb = listItem.dataset.suburb;
+        const postcode = listItem.dataset.postcode;
+        const coordinates = JSON.parse(`[${listItem.dataset.coordinates}]`);
 
         // Add to selected list
         const li = document.createElement('li');
-        li.className = 'flex items-start p-3 bg-gray-200 rounded-lg space-x-4';
+        li.className = 'flex items-start p-3 bg-gray-200 rounded-lg space-x-4 cursor-move';
+        li.draggable = true; // Make the item draggable
         li.innerHTML = `
           <span class="order-number flex items-center justify-center w-8 h-8 bg-indigo-500 text-white rounded-full">${selectedLocations.children.length + 1}</span>
           <div class="flex-grow">
@@ -221,8 +258,101 @@
         // Remove the list item
         selectedLocations.removeChild(li);
         updateListNumbers(); // Update numbers after removal
+        updateMarkers(); // Update marker numbers after removal
       }
     });
+
+    // Handle drag and drop for reordering
+    let draggedItem = null;
+    let dropLine = document.createElement('div');
+    dropLine.className = 'drop-line';
+
+    selectedLocations.addEventListener('dragstart', (e) => {
+      if (e.target.tagName === 'LI') {
+        draggedItem = e.target;
+        draggedItem.classList.add('dragging');
+        setTimeout(() => {
+          e.target.style.display = 'none';
+        }, 0);
+      }
+    });
+
+    selectedLocations.addEventListener('dragend', (e) => {
+        setTimeout(() => {
+            draggedItem.style.display = 'flex';
+            draggedItem.classList.remove('dragging');
+            draggedItem = null;
+            if (dropLine.parentNode) {
+            dropLine.parentNode.removeChild(dropLine);
+            }
+
+            // Reorder markers array based on new list order
+            const items = selectedLocations.querySelectorAll('li');
+            const newMarkers = [];
+            const newCoordinatesArray = [];
+
+            items.forEach((item) => {
+            const index = parseInt(item.querySelector('.order-number').textContent, 10) - 1;
+            newMarkers.push(markers[index]);
+            newCoordinatesArray.push(coordinatesArray[index]);
+            });
+
+            markers.forEach(marker => marker.remove()); // Remove existing markers
+            markers.length = 0; // Clear original markers array
+            coordinatesArray.length = 0; // Clear original coordinates array
+
+            // Re-add markers in the new order
+            newMarkers.forEach((marker, index) => {
+            const el = marker.getElement();
+            el.textContent = index + 1;
+            marker.addTo(map);
+            markers.push(marker);
+            coordinatesArray.push(newCoordinatesArray[index]);
+            });
+
+            adjustToBounds(); // Adjust bounds to new marker positions
+
+            updateListNumbers(); // Update the list order numbers
+            updateMarkers(); // Update marker numbers after reordering
+        }, 0);
+    });
+
+
+    selectedLocations.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      const afterElement = getDragAfterElement(selectedLocations, e.clientY);
+      if (afterElement == null) {
+        selectedLocations.appendChild(dropLine);
+      } else {
+        selectedLocations.insertBefore(dropLine, afterElement);
+      }
+    });
+
+    selectedLocations.addEventListener('drop', (e) => {
+      e.preventDefault();
+      if (draggedItem) {
+        const afterElement = getDragAfterElement(selectedLocations, e.clientY);
+        if (afterElement == null) {
+          selectedLocations.appendChild(draggedItem);
+        } else {
+          selectedLocations.insertBefore(draggedItem, afterElement);
+        }
+      }
+    });
+
+    function getDragAfterElement(container, y) {
+      const draggableElements = [...container.querySelectorAll('li:not(.dragging)')];
+
+      return draggableElements.reduce((closest, child) => {
+        const box = child.getBoundingClientRect();
+        const offset = y - box.top - box.height / 2;
+        if (offset < 0 && offset > closest.offset) {
+          return { offset: offset, element: child };
+        } else {
+          return closest;
+        }
+      }, { offset: Number.NEGATIVE_INFINITY }).element;
+    }
 
     // Close results list when clicking outside
     document.addEventListener('click', (e) => {
